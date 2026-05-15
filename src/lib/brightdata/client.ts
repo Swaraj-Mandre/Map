@@ -20,9 +20,33 @@ export type BrightDataScrapeResult = {
 };
 
 function normalizeDiscoveryType(value: string): string {
-  const normalized = value.trim().toLowerCase().replace(/\s+/g, "_");
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "profile_url_most_recent_posts";
+  }
 
-  if (normalized === "discover_by_profile_url_most_recent_posts") {
+  let candidate = trimmed;
+
+  try {
+    const url = new URL(trimmed);
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    const configurationIndex = pathParts.lastIndexOf("configuration");
+
+    if (configurationIndex > 0) {
+      candidate = pathParts[configurationIndex - 1] ?? candidate;
+    } else if (pathParts.length > 0) {
+      candidate = pathParts[pathParts.length - 1] ?? candidate;
+    }
+  } catch {
+    // Keep the original value when it is already a slug.
+  }
+
+  const normalized = candidate.toLowerCase().replace(/\s+/g, "_");
+
+  if (
+    normalized === "discover_by_profile_url_most_recent_posts" ||
+    normalized === "profile_url_most_recent_posts"
+  ) {
     return "profile_url_most_recent_posts";
   }
 
@@ -56,14 +80,47 @@ function getConfig(): BrightDataConfig {
     profileUrls,
     scrapeEndpoint:
       process.env.BRIGHTDATA_TRIGGER_ENDPOINT ??
-      `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(datasetId)}&notify=false&include_errors=true&type=discover_new`,
+      `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${encodeURIComponent(datasetId)}&notify=false&include_errors=true&type=discover_new&discover_by=profile_url_most_recent_posts`,
     discoveryType:
       process.env.BRIGHTDATA_DISCOVERY_TYPE ??
       "profile_url_most_recent_posts",
   };
 }
 
-async function scrapeBrightData(config: BrightDataConfig): Promise<BrightDataScrapeResult> {
+function extractRows(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  const record = payload as Record<string, unknown>;
+  const candidateKeys = ["data", "results", "result", "items", "posts", "output"];
+
+  for (const key of candidateKeys) {
+    const value = record[key];
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  const nestedArrays = Object.values(record).filter(Array.isArray) as unknown[][];
+  return nestedArrays[0] ?? [];
+}
+
+function formatBrightDataError(message: string): string {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("customer is not active")) {
+    return "Bright Data customer is not active. Confirm the API token belongs to the active account and the dataset is enabled for that account.";
+  }
+
+  return message;
+}
+
+export async function runBrightDataScraper(): Promise<BrightDataScrapeResult> {
+  const config = getConfig();
   const url = new URL(config.scrapeEndpoint);
   if (!url.searchParams.has("dataset_id")) {
     url.searchParams.set("dataset_id", config.datasetId);
@@ -80,6 +137,7 @@ async function scrapeBrightData(config: BrightDataConfig): Promise<BrightDataScr
   if (!url.searchParams.has("discover_by")) {
     url.searchParams.set("discover_by", normalizeDiscoveryType(config.discoveryType));
   }
+
   const requestBody = {
     input: config.profileUrls.map((profileUrl) => ({
       url: profileUrl,
@@ -100,41 +158,12 @@ async function scrapeBrightData(config: BrightDataConfig): Promise<BrightDataScr
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || "Bright Data trigger failed.");
+    throw new Error(formatBrightDataError(text || "Bright Data trigger failed."));
   }
 
   const payload = (await response.json()) as unknown;
-  let rows: unknown[] = [];
-
-  if (Array.isArray(payload)) {
-    rows = payload;
-  } else if (payload && typeof payload === "object") {
-    const record = payload as Record<string, unknown>;
-    const candidateKeys = ["data", "results", "result", "items", "posts", "output"];
-
-    for (const key of candidateKeys) {
-      const value = record[key];
-      if (Array.isArray(value)) {
-        rows = value;
-        break;
-      }
-    }
-
-    if (rows.length === 0) {
-      const nestedArrays = Object.values(record).filter(Array.isArray) as unknown[][];
-      if (nestedArrays.length > 0) {
-        rows = nestedArrays[0];
-      }
-    }
-  }
-
   return {
     rawResponse: payload,
-    rows,
+    rows: extractRows(payload),
   };
-}
-
-export async function runBrightDataScraper(): Promise<BrightDataScrapeResult> {
-  const config = getConfig();
-  return scrapeBrightData(config);
 }

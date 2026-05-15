@@ -62,7 +62,8 @@ This project can ingest recent X (Twitter) posts using Bright Data datasets.
 2. Set `BRIGHTDATA_API_TOKEN` to your Bright Data API token.
 3. Set `BRIGHTDATA_DATASET_ID` to your dataset ID (e.g. `gd_lwxkxvnf1cynvib9co`).
 4. Set `BRIGHTDATA_PROFILE_URLS` to a comma-separated list of X profile URLs.
-5. Set `BRIGHTDATA_DISCOVERY_TYPE` to `profile_url` for "Discover by profile url most recent posts".
+5. Set `BRIGHTDATA_DISCOVERY_TYPE` to `profile_url_most_recent_posts` for "Discover by profile url most recent posts".
+  The app also accepts the Bright Data dashboard URL for that configuration and normalizes it.
 
 ### 2) Use Bright Data APIs
 
